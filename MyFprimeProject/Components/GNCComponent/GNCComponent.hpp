@@ -9,12 +9,17 @@
 
 #include <cstring>
 #include <initializer_list>
+#include <memory>
 #include <type_traits>
 #include "Fw/Types/BasicTypes.h"
 #include "MyFprimeProject/Components/GNCComponent/GNCComponentComponentAc.hpp"
 #include "MyFprimeProject/Components/GNCComponent/PositionSerializableAc.hpp"
 #include "MyFprimeProject/Components/GNCComponent/RotationSerializableAc.hpp"
 #include "MyFprimeProject/Components/GNCComponent/VelocitySerializableAc.hpp"
+#include "Os/IntervalTimer.hpp"
+#include <immintrin.h>
+#include <smmintrin.h>
+#include <xmmintrin.h>
 
 namespace MyFprimeProject {
 
@@ -54,7 +59,7 @@ struct ProtectedNumber {
   //! Check, restore (if need) and return value OR set and return given base value if can't restore corrupted value.
   //! Return value AND state in given param if provided.
   __attribute__((warn_unused_result("Use result of get function!")))
-  inline T get_safe(T base, ProtectionState* state) const {
+  inline T get_safe(T base, ProtectionState* state = nullptr) const {
     MirrorType raw;
     std::memcpy(&raw, &this->value, sizeof(T));
 
@@ -68,7 +73,7 @@ struct ProtectedNumber {
   }
 
   __attribute__((cold, noinline))
-  T repair_and_get(T base, ProtectionState* state) const {
+  T repair_and_get(T base, ProtectionState* state = nullptr) const {
     MirrorType raw, raw_copy, raw_copy2, raw_base;
     std::memcpy(&raw, &this->value, sizeof(T));
     std::memcpy(&raw_copy, &this->copy, sizeof(T));
@@ -119,6 +124,16 @@ struct ProtectedNumber {
     }
 
   public:
+    ProtectedNumber<T>& operator+(const ProtectedNumber<T>& other) {
+      set(this->value + other.value);
+      return *this;
+    }
+
+    ProtectedNumber<T>& operator*(const ProtectedNumber<T>& other) {
+      set(this->value * other.value);
+      return *this;
+    }
+
     bool operator==(ProtectedNumber<T> other) {
       return this->value == other.value;
     }
@@ -186,6 +201,32 @@ struct ProtectedVector3 {
     return *this;
   }
 
+  ProtectedVector3<T>& operator+(const ProtectedVector3<T>& other) {
+    this->x += other.x;
+    this->y += other.y;
+    this->z += other.z;
+    return *this;
+  }
+
+  ProtectedVector3<T>& operator-(const ProtectedVector3<T>& other) {
+    this->x -= other.x;
+    this->y -= other.y;
+    this->z -= other.z;
+    return *this;
+  }
+
+  static constexpr inline ProtectedNumber<F32> distance(const ProtectedVector3<T>& v1, const ProtectedVector3<T>& v2) {
+    __m128 _mm_v1 = _mm_setr_ps(v1.x.get_safe(0), v1.y.get_safe(0), v1.z.get_safe(0), 0.0f);
+    __m128 _mm_v2 = _mm_setr_ps(v2.x.get_safe(0), v2.y.get_safe(0), v2.z.get_safe(0), 0.0f);
+
+    __m128 diff = _mm_sub_ps(_mm_v1, _mm_v2);
+    __m128 dot = _mm_dp_ps(diff, diff, 0x71);
+    __m128 res = _mm_sqrt_ps(dot);
+
+    ProtectedNumber<F32> res_as_f = ProtectedNumber<F32>(_mm_cvtss_f32(res));
+    return res_as_f;
+  }
+
   bool operator==(const ProtectedVector3<T>& other) {
     if (this->x == other.x && this->y == other.y && this->z == other.z) return true;
     return false;
@@ -233,6 +274,11 @@ class GNCComponent final : public GNCComponentComponentBase {
     ProtectedVector3<F32> m_current_angle_velocity;
 
     ProtectedNumber<U32> m_last_iter_time_ms;
+    ProtectedNumber<U32> dt;
+
+    ProtectedNumber<F32> m_integral;
+
+    std::unique_ptr<Os::IntervalTimer> timer;
 
     bool m_is_target_rotation_set = false;
     bool m_is_target_position_set = false;
@@ -242,6 +288,7 @@ class GNCComponent final : public GNCComponentComponentBase {
     ProtectedNumber<U32> time_for_rotate_ms;
     ProtectedNumber<U32> time_for_exchange_position;
     ProtectedNumber<U32> time_for_exchange_velocity;
+    ProtectedNumber<U32> time_for_exchange_angle_velocity;
 
     void rotate_to_target();
     void velocity_to_target();

@@ -5,6 +5,9 @@
 // ======================================================================
 
 #include "MyFprimeProject/Components/GNCComponent/GNCComponent.hpp"
+#include <memory>
+#include "Fw/Prm/ParamValidEnumAc.hpp"
+#include "Os/IntervalTimer.hpp"
 
 namespace MyFprimeProject {
 
@@ -12,7 +15,9 @@ namespace MyFprimeProject {
 // Component construction and destruction
 // ----------------------------------------------------------------------
 
-GNCComponent ::GNCComponent(const char* const compName) : GNCComponentComponentBase(compName) {}
+GNCComponent ::GNCComponent(const char* const compName) : GNCComponentComponentBase(compName) {
+    this->timer = std::make_unique<Os::IntervalTimer>();
+}
 
 GNCComponent ::~GNCComponent() {}
 
@@ -83,22 +88,28 @@ void GNCComponent ::SET_VELOCITY_cmdHandler(FwOpcodeType opCode,
 
 void GNCComponent ::schedIn_handler(FwIndexType portNum, U32 context) {
     // TODO Implement GNC loop step
-
-    if (this->m_current_rotation != this->m_target_rotation) {
+    if (this->dt.get_safe(0) != 0) {
+        this->timer->stop();
+        this->dt = this->timer->getDiffUsec();
+    }
+    
+    if (this->m_current_rotation != this->m_target_rotation && this->m_is_target_rotation_set) {
         rotate_to_target();
     }
 
-    if (this->m_current_velocity != this->m_target_velocity) {
+    if (this->m_current_velocity != this->m_target_velocity && this->m_is_target_velocity_set) {
         velocity_to_target();
     }
 
-    if (this->m_current_angle_velocity != this->m_target_angle_velocity) {
+    if (this->m_current_angle_velocity != this->m_target_angle_velocity && this->m_is_target_angle_velocity_set) {
         angle_velocity_to_target();
     }
 
-    if (this->m_current_position != this->m_target_position) {
+    if (this->m_current_position != this->m_target_position && this->m_is_target_position_set) {
         position_to_target();
     }
+
+    this->timer->start();
 }
 
 void GNCComponent ::position_to_target() {
@@ -114,7 +125,17 @@ void GNCComponent ::velocity_to_target() {
 }
 
 void GNCComponent ::angle_velocity_to_target() {
+    Fw::ParamValid valid;
+    F32 kp = this->paramGet_VEL_Kp(valid);
+    F32 ki = this->paramGet_VEL_Ki(valid);
+    F32 kd = this->paramGet_VEL_Kd(valid);
 
+    ProtectedNumber<F32> error = ProtectedVector3<F32>::distance(
+        this->m_target_angle_velocity,
+        this->m_current_angle_velocity
+    );
+
+    this->m_integral += error * this->dt;
 }
 
 }  // namespace MyFprimeProject
