@@ -5,11 +5,14 @@
 // ======================================================================
 
 #include "MyFprimeProject/Components/GNCComponent/GNCComponent.hpp"
+#include <atomic>
 #include <memory>
 #include "Fw/Prm/ParamValidEnumAc.hpp"
 #include "Os/IntervalTimer.hpp"
 
 namespace MyFprimeProject {
+
+std::atomic<U32> total_correction_memory{0};
 
 // ----------------------------------------------------------------------
 // Component construction and destruction
