@@ -9,18 +9,22 @@
 
 #include <array>
 #include <cstring>
-#include <memory>
+#include "Eigen/Core"
 #include "Fw/Types/BasicTypes.h"
 #include "MyFprimeProject/Components/GNCComponent/GNCComponentComponentAc.hpp"
-#include "MyFprimeProject/Components/GNCComponent/PositionSerializableAc.hpp"
-#include "MyFprimeProject/Components/GNCComponent/RotationSerializableAc.hpp"
-#include "MyFprimeProject/Components/GNCComponent/VelocitySerializableAc.hpp"
-#include "Os/IntervalTimer.hpp"
+#include "MyFprimeProject/Components/GNCComponent/GncModeEnumAc.hpp"
+#include "MyFprimeProject/Components/GNCComponent/GyroDataSerializableAc.hpp"
+#include "MyFprimeProject/Components/GNCComponent/OrientDataSerializableAc.hpp"
+#include "MyFprimeProject/Components/GNCComponent/Vec3SerializableAc.hpp"
+#include "MyFprimeProject/Components/GNCComponent/WayPointSerializableAc.hpp"
 #include <atomic>
+#include <Eigen/Dense>
+#include <Eigen/Geometry>
 
 namespace MyFprimeProject {
 
 extern std::atomic<U32> total_correction_memory;
+extern std::atomic<U32> current_mission_time_ms;
 
 template<typename T>
 struct ProtectedObject {
@@ -49,6 +53,9 @@ public:
   }
 
   constexpr ProtectedObject(const T& v) { set(v); }
+  constexpr ProtectedObject() : m_copy1{}, m_copy2{}, m_copy3{} {
+    update_mirror();
+  }
 
   inline void set(const T& value) {
     m_copy1 = value;
@@ -59,7 +66,7 @@ public:
 
   //! Check, restore (if need) and return value OR set and return given base value if can't restore corrupted value.
   //! Return value AND state in given param if provided.
-  __attribute__((warn_unused_result("Use result of get function!")))
+  [[nodiscard]]
   inline T get(T base, Status& out_status) {
     // Best way: value is valid
     if (__buildin_expect(validated_mirror(), 1)) {
@@ -74,7 +81,7 @@ private:
   bool validated_mirror() const {
     const U64* raw = reinterpret_cast<const U64*>(&m_copy1);
     for (size_t i = 0; i < Words; ++i) {
-      if (__builtin_expect(raw[i] != ~m_mirror, 1)) return false;
+      if (__builtin_expect(raw[i] != ~m_mirror[i], 1)) return false;
     }
     return true;
   }
@@ -109,38 +116,68 @@ private:
   }
 };
 
+//! Extend Kalman Filter
+//! S - state size
+//! M - measurement size
+template<int S, int M>
+class EKF {
+  Eigen::Matrix<F32, S, 1> x;
+  Eigen::Matrix<F32, S, S> P;
+  Eigen::Matrix<F32, S, S> Q;
+  Eigen::Matrix<F32, M, M> R;
+
+  void predict(F32 dt) {
+    Eigen::Matrix<F32, S, S> F = compute_jacobian_F(x, dt);
+
+    P.normalize() = F * P * F.transpose() + Q;
+  }
+
+  void update(const Eigen::Matrix<F32, M, 1>& z) {
+    Eigen::Matrix<F32, M, S> H = compute_jacobian_H(x);
+
+    auto S_mat = H * P * H.transpose() + R;
+    Eigen::Matrix<F32, S, M> K = P * H.transpose() * S_mat.inverse();
+
+    x = x + K * (z - h(x));
+
+    P = (Eigen::Matrix<F32, S, S>::Identity() - K * H) * P;
+  }
+
+  static inline Eigen::Matrix<F32, S, S> compute_jacobian_F(Eigen::Matrix<F32, S, 1> target_x, F32 dt) {
+    // TODO
+  }
+
+  static inline Eigen::Matrix<F32, M, S> compute_jacobian_H(Eigen::Matrix<F32, S, 1> target_x) {
+    // TODO
+  }
+};
+
 class GNCComponent final : public GNCComponentComponentBase {
   private:
-    ProtectedObject<F32> m_target_rotation = 0.0f;
-    ProtectedObject<F32> m_target_position = 0.0f;
-    ProtectedObject<F32> m_target_velocity = 0.0f;
-    ProtectedObject<F32> m_target_angle_velocity = 0.0f;
+    ProtectedObject<WayPoint> m_target_waypoint;
+    ProtectedObject<F64> m_max_torque;
+    ProtectedObject<Vec3> m_proportional_gain;
+    ProtectedObject<Vec3> m_derivative_gain;
+    ProtectedObject<Vec3> m_q_sigma;
+    ProtectedObject<Vec3> m_q_gyro_sigma;
+    ProtectedObject<Vec3> q_star_sigma;
+    ProtectedObject<GncMode> m_gnc_mode;
+    ProtectedObject<Vec3> m_sun_panels_normal;
 
-    F32 m_current_rotation = 0.0f;
-    F32 m_current_position = 0.0f;
-    F32 m_current_velocity = 0.0f;
-    F32 m_current_angle_velocity = 0.0f;
+    Vec3 m_current_sun_vector;
+    OrientData m_current_orientation;
+    GyroData m_current_angular_velocity;
+    Vec3 m_current_position;
 
-    U32 m_last_iter_time_ms = 0;
-    U32 dt = 0;
-
-    std::unique_ptr<Os::IntervalTimer> timer;
-
-    bool m_is_target_rotation_set = false;
-    bool m_is_target_position_set = false;
-    bool m_is_target_velocity_set = false;
-    bool m_is_target_angle_velocity_set = false;
-
-    ProtectedObject<U32> time_for_rotate_ms = 0;
-    ProtectedObject<U32> time_for_exchange_position = 0;
-    ProtectedObject<U32> time_for_exchange_velocity = 0;
-    ProtectedObject<U32> time_for_exchange_angle_velocity = 0;
-
-    void rotate_to_target();
-    void velocity_to_target();
-    void position_to_target();
-    void angle_velocity_to_target();
-
+    inline WayPoint make_current_way_point() const {
+      WayPoint point = WayPoint(
+        current_mission_time_ms.load(),
+        m_current_position,
+        m_current_angular_velocity.get_angular_rates(),
+        m_current_orientation.get_orientation()
+      );
+      return point;
+    }
   public:
     // ----------------------------------------------------------------------
     // Component construction and destruction
@@ -158,22 +195,35 @@ class GNCComponent final : public GNCComponentComponentBase {
     // Handler implementations for typed input ports
     // ----------------------------------------------------------------------
 
-    //! Handler implementation for positionIn
-    void positionIn_handler(FwIndexType portNum,                       //!< The port number
-                            const MyFprimeProject::Position& position  //!< Position value
-                            ) override;
+    //! Handler implementation for GyroDataIn
+    //!
+    //! Port for transfer data from gyroscop to GNC component. \
+      //! GNC uses this data as current angular velocity for EKF prediction
+    void GyroDataIn_handler(FwIndexType portNum,  //!< The port number
+                            const MyFprimeProject::GyroData& data) override;
 
-    //! Handler implementation for rotationIn
-    void rotationIn_handler(FwIndexType portNum,                       //!< The port number
-                            const MyFprimeProject::Rotation& rotation  //!< Rotation value
-                            ) override;
+    //! Handler implementation for StarTrackerDataIn
+    //!
+    //! Port for transfer data from star tracker to GNC component. \
+      //! GNC use this data as current orientation
+    void StarTrackerDataIn_handler(FwIndexType portNum,  //!< The port number
+                                   const MyFprimeProject::OrientData& data) override;
 
-    //! Handler implementation for velocityIn
-    void velocityIn_handler(FwIndexType portNum,                       //!< The port number
-                            const MyFprimeProject::Velocity& velocity  //!< Velocity value
-                            ) override;
+    //! Handler implementation for SunPanelsNormalIn
+    //!
+    //! Port for transfer normalize vector of all sun panels on the spacecraft
+    void SunPanelsNormalIn_handler(FwIndexType portNum,  //!< The port number
+                                   const MyFprimeProject::Vec3& normal) override;
+
+    //! Handler implementation for SunVectorIn
+    //!
+    //! Port for transfer vector to Sun from sensor/tracker
+    void SunVectorIn_handler(FwIndexType portNum,  //!< The port number
+                             const MyFprimeProject::Vec3& position) override;
 
     //! Handler implementation for schedIn
+    //!
+    //! GNC Tick Port. Should called every 10 ms
     void schedIn_handler(FwIndexType portNum,  //!< The port number
                          U32 context           //!< The call order
                          ) override;
@@ -183,29 +233,17 @@ class GNCComponent final : public GNCComponentComponentBase {
     // Handler implementations for commands
     // ----------------------------------------------------------------------
 
-    //! Handler implementation for command SET_ROTATION
+    //! Handler implementation for command SET_TARGET_STATE
     //!
-    //! Command to change current Rotation to vector x, y, z
-    void SET_ROTATION_cmdHandler(FwOpcodeType opCode,                       //!< The opcode
-                                 U32 cmdSeq,                                //!< The command sequence number
-                                 MyFprimeProject::Rotation target_rotation  //!< Target rotation
-                                 ) override;
+    //! Command to set target state for specific time in ms by start of the mission
+    void SET_TARGET_WAYPOINT_cmdHandler(FwOpcodeType opCode,  //!< The opcode
+                                     U32 cmdSeq,           //!< The command sequence number
+                                     MyFprimeProject::WayPoint target_state) override;
 
-    //! Handler implementation for command SET_POSITION
-    //!
-    //! Command to change current position to vector x, y, z
-    void SET_POSITION_cmdHandler(FwOpcodeType opCode,                       //!< The opcode
-                                 U32 cmdSeq,                                //!< The command sequence number
-                                 MyFprimeProject::Position target_position  //!< Target position
-                                 ) override;
-
-    //! Handler implementation for command SET_VELOCITY
-    //!
-    //! Command to change current velocity to vector x, y, z
-    void SET_VELOCITY_cmdHandler(FwOpcodeType opCode,                       //!< The opcode
-                                 U32 cmdSeq,                                //!< The command sequence number
-                                 MyFprimeProject::Velocity target_velocity  //!< Target velocity
-                                 ) override;
+    //! Handler implementation for command SET_MODE
+    void SET_MODE_cmdHandler(FwOpcodeType opCode,  //!< The opcode
+                             U32 cmdSeq,           //!< The command sequence number
+                             MyFprimeProject::GncMode mode) override;
 };
 
 }  // namespace MyFprimeProject

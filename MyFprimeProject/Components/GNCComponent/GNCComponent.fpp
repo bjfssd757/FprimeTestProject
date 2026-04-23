@@ -1,119 +1,173 @@
 module MyFprimeProject {
 
-    struct Velocity {
-        x: F32,
-        y: F32,
-        z: F32,
-    } default {
-        x = 0,
-        y = 0,
-        z = 0,
+    struct Vec3 {
+        x: F32
+        y: F32
+        z: F32
     }
 
-    struct Position {
-        x: F32,
-        y: F32,
-        z: F32,
-    } default {
-        x = 0,
-        y = 0,
-        z = 0,
+    struct Quaternion {
+        w: F32
+        x: F32
+        y: F32
+        z: F32
     }
 
-    struct Rotation {
-        x: F32,
-        y: F32,
-        z: F32,
-    } default {
-        x = 0,
-        y = 0,
-        z = 0,
+    struct GyroData {
+        angular_rates: Vec3 @< Data from gyroscops (or other sensor which provide current angular velocity) with current angular velocity by X, Y and Z axis
+        timestamp: U32 @< What time this data has been taken from gyroscops. Time should be provided from last data take
     }
 
-    @ Port for transfer current velocity to GNC component
-    port VelocityPort(
-        $velocity: Velocity @< Velocity value
+    struct OrientData {
+        orientation: Quaternion @< Data from star tracker (or other sensors wich provide current orientation in space) casted to quaternion
+        timestamp: U32 @< What time this data has been taken from sensors. Time should be provided from last data take
+    }
+
+    @ Way point for provided time
+    struct WayPoint {
+        target_time: U32 @< Target moment (ms) of mission execution
+        position: Vec3 @< Target position in this moment
+        angular_velocity: Vec3 @< Target angular velocity in this moment
+        orientation: Quaternion @< Target orientation (quaterion) in this moment
+    }
+
+    enum GncMode {
+        @ GNC is OFF
+        OFF
+
+        @ Damping of angular velocities
+        DETUMBLE
+
+        @ Guidance to the target (following way point)
+        POINTING
+        
+        @ GNC in Safe Mode:
+        @ 1. Orientation solar panels of the spacecraft to Sun
+        @ 2. Damping of angular velocities
+        SAFE
+    }
+
+    @ Port for transfer data from gyroscop to GNC component \
+    @ GNC uses this data as current angular velocity for EKF prediction
+    port GyroSensorDataPort(
+        data: GyroData
     )
 
-    @ Port for transfer current position to GNC component
-    port PositionPort(
-        $position: Position @< Position value
+    @ Port for transfer data from star tracker to GNC component. \
+    @ GNC use this data as current orientation
+    port StarSensorDataPort(
+        data: OrientData
     )
 
-    @ Port for transfer current rotation to GNC component
-    port RotationPort(
-        $rotation: Rotation @< Rotation value
+    @ Port for transfer torque calculated by GNC component
+    port TorqueCommandPort(
+        torque: Vec3
+    )
+
+    @ Port for transfer vector to Sun from sensor/tracker
+    port SunVectorPort(
+        position: Vec3
+    )
+
+    @ Port for transfer normalize vector of all sun panels on the spacecraft
+    port SunPanelsNormalPort(
+        normal: Vec3
     )
 
     @ Component for Guidance, Navigation and Control of spaceship
     active component GNCComponent {
 
-        @ Stability PID controller: Proportional coefficient
-        param STAB_PID_Kp: F32 default 1.0
+        @ Proportial coefficient for PD controller
+        param PGain: Vec3
 
-        @ Stability PID controller: Integral coefficient
-        param STAB_PID_Ki: F32 default 0.1
+        @ Derivative coefficient for PD controller
+        param DGain: Vec3
 
-        @ Stability PID controller: Derivative coefficient
-        param STAB_PID_Kd: F32 default 0.01
+        @ Max Torque which GNC can set to reaction wheels
+        param MaxTorque: F64
 
+        @ Process noise
+        @ (How much do we trust the model?)
+        param Q_Sigma: Vec3
 
-        @ Velocity PID controller: Proportional coefficient
-        param VEL_Kp: F32 default 1.1
+        @ Gyroscop (or other sensors which provide current angular velocity) sensor noise \
+        @ (How much do we trust the gyro?)
+        param R_Gyro_Sigma: Vec3
 
-        @ Velocity PID controller: Integral coefficient
-        param VEL_Ki: F32 default 0.2
+        @ Star (or other sensors which provide current orientation in the space) sensor noise \
+        @ (How much do we trust the star tracker)
+        param R_Star_Sigma: Vec3
 
-        @ Velocity PID controller: Derivative coefficient
-        param VEL_Kd: F32 default 0.02
+        # ---------------- Commands and Events ---------------
 
-        @ Command to change current Rotation to vector x, y, z
-        async command SET_ROTATION(
-            target_rotation: Rotation @< Target rotation
+        @ Command to set target state for specific time in ms by start of the mission
+        async command SET_TARGET_WAYPOINT(
+            target_state: WayPoint
         )
 
-        @ Rotation event with new target for Rotation
-        event RotationEvent(
-            target_rotation: Rotation @< Target rotation
-        ) severity activity high format "GNC receive new target rotation: {}"
+        @ Event for SET_TARGET_STATE command. Call on receive command
+        event SetTargetStateEvent(
+            target_state: WayPoint
+        ) severity activity high format "GNC receive target state: {}"
 
 
-        @ Command to change current position to vector x, y, z
-        async command SET_POSITION(
-            target_position: Position @< Target position
+        async command SET_MODE(
+            mode: GncMode
         )
 
-        @ Position event with new target for position
-        event PositionEvent(
-            target_position: Position @< Target position
-        ) severity activity high format "GNC receive new target position: {}"
+        event SetModeEvent(
+            mode: GncMode
+        ) severity activity high format "GNC receive new mode: {}"
 
+        # ----------- Way Point Telementry ---------
 
-        @ Command to change current velocity to vector x, y, z
-        async command SET_VELOCITY(
-            target_velocity: Velocity @< Target velocity
-        )
+        telemetry TlmCurrentWayPoint:               WayPoint id 1
+        telemetry TlmTargetWayPoint:                WayPoint id 2
 
-        @ Velocity event with new target for velocity
-        event VelocityEvent(
-            target_velocity: Velocity @< Target velocity
-        ) severity activity high format "GNC receive new target velocity: {}"
+        # ---------- Error Correction Code Telemetry ----------
 
+        @ How many corrections made by ECC in GNC component
+        telemetry TlmECCurrentMemoryCorrections:    U32 id 3
 
-        telemetry TlmCurrentPosition: Position id 1
-        telemetry TlmCurrentRotation: Rotation id 2
-        telemetry TlmCurrentVelocity: Velocity id 3
+        # ---------- Controller and Filter Telemetry ----------
 
-        telemetry TlmTargetPosition: Position id 4
-        telemetry TlmTargetRotation: Rotation id 5
-        telemetry TlmTargetVelocity: Velocity id 6
+        @ Error by angles
+        telemetry TlmAngleError:                 Vec3 id 4
 
+        @ Error by angular velocity
+        telemetry TlmAngularVelocityError:       Vec3 id 5
 
-        sync input port velocityIn: VelocityPort
-        sync input port positionIn: PositionPort
-        sync input port rotationIn: RotationPort
+        # ---------- General Telemetry -----------
 
-        sync input port schedIn: Svc.Sched
+        @ Last provided torque to reaction wheels
+        telemetry TlmControlTorque:              Vec3 id 6
+
+        @ Current GNC Mode
+        telemetry TlmCurrentGncMode:             GncMode id 7
+
+        # --------------- Input Ports ----------------
+
+        @ Port for transfer data from gyroscop to GNC component. \
+        @ GNC uses this data as current angular velocity for EKF prediction
+        sync input port GyroDataIn:         GyroSensorDataPort
+
+        @ Port for transfer data from star tracker to GNC component. \
+        @ GNC use this data as current orientation
+        sync input port StarTrackerDataIn:  StarSensorDataPort
+
+        @ Port for transfer vector to Sun from sensor/tracker
+        sync input port SunVectorIn:        SunVectorPort
+
+        @ Port for transfer normalize vector of all sun panels on the spacecraft
+        sync input port SunPanelsNormalIn:  SunPanelsNormalPort
+
+        @ GNC Tick Port. Should called every 10 ms
+        sync input port schedIn:            Svc.Sched
+
+        # -------------- Output Ports ---------------
+
+        @ Port for transfer torque calculated by GNC component
+        output port TorqueOut: TorqueCommandPort
 
         ###############################################################################
         # Standard AC Ports: Required for Channels, Events, Commands, and Parameters  #

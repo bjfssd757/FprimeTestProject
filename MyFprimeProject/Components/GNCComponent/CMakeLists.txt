@@ -19,6 +19,8 @@ register_fprime_library(
         "${CMAKE_CURRENT_LIST_DIR}/GNCComponent.fpp"
     SOURCES
         "${CMAKE_CURRENT_LIST_DIR}/GNCComponent.cpp"
+    DEPENDS
+        eigen
 #   DEPENDS
 #       MyPackage_MyOtherModule
 )
