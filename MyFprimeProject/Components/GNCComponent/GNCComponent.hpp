@@ -10,6 +10,7 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include "Fw/Prm/ParamValidEnumAc.hpp"
 #include "Fw/Time/Time.hpp"
 #include "Fw/Types/BasicTypes.h"
 #include "MyFprimeProject/Components/GNCComponent/BatteryStateSerializableAc.hpp"
@@ -165,12 +166,17 @@ public:
 
 class GNCComponent final : public GNCComponentComponentBase {
   private:
-    const ProtectedObject<U32> m_dt_ms = 10;
+    U32 m_dt_ms = 0;
+    U64 m_last_ms = 0;
 
     ProtectedObject<WayPoint> m_target_waypoint;
     ProtectedObject<F32> m_max_torque;
     ProtectedObject<GncMode> m_gnc_mode;
+    ProtectedObject<GncMode> m_last_gnc_mode;
     ProtectedObject<EMA> m_ema_filter;
+    ProtectedObject<F32> m_max_rpm;
+    ProtectedObject<U32> m_min_saturation_percent;
+    ProtectedObject<U32> m_max_saturation_percent;
 
     bool m_current_orient_valid = true;
     bool m_current_angular_vel_valid = true;
@@ -183,10 +189,78 @@ class GNCComponent final : public GNCComponentComponentBase {
     BatteryState m_current_battery_state;
     Vec3 m_current_b_field;
     Vec3 m_prev_b_field;
+    Vec3 m_current_reaction_wheels_rpm;
 
     void LOOP_detumble_mode();
     void LOOP_safe_mode();
     void LOOP_pointing_mode();
+
+    struct CombinedTorque {
+      Vec3 wheels_torque;
+      Vec3 coil_dipole;
+    };
+
+    CombinedTorque calculate_dual_actuator_output(
+      const Vec3& required_torque,
+      const Vec3& current_rpm,
+      const Vec3& current_b_field,
+      F32 max_rpm,
+      F32 min_percent,
+      F32 max_percent,
+      bool& out_is_rpm_greater_max
+    ) {
+      CombinedTorque out;
+      out.wheels_torque = required_torque;
+      out.coil_dipole = Vec3(0, 0, 0);
+
+      F32 low_limit = max_rpm * min_percent;
+      F32 high_limit = max_rpm * max_percent;
+
+      Vec3 desat_torque;
+      Fw::ParamValid valid;
+      F32 k_desat = this->paramGet_KDesat(valid);
+      if (valid == Fw::ParamValid::INVALID) k_desat = 0.1f;
+
+      auto get_desat_component = [&](F32 rpm) {
+        F32 abs_rpm = (rpm < 0) ? -rpm : rpm;
+        if (abs_rpm < low_limit) return 0.0f;
+
+        return rpm * k_desat;
+      };
+
+      Vec3 h_vector;
+      h_vector.set_x(get_desat_component(current_rpm.get_x()));
+      h_vector.set_y(get_desat_component(current_rpm.get_y()));
+      h_vector.set_z(get_desat_component(current_rpm.get_z()));
+
+      F32 b_mag_sq = current_b_field.get_x() * current_b_field.get_x() + 
+                     current_b_field.get_y() * current_b_field.get_y() + 
+                     current_b_field.get_z() * current_b_field.get_z();
+
+      if (b_mag_sq > 1e-12f) {
+        F32 inv_b2 = 1.0f / b_mag_sq;
+        out.coil_dipole.set_x((h_vector.get_y() * current_b_field.get_z() - h_vector.get_z() * current_b_field.get_y()) * inv_b2);
+        out.coil_dipole.set_y((h_vector.get_z() * current_b_field.get_x() - h_vector.get_x() * current_b_field.get_z()) * inv_b2);
+        out.coil_dipole.set_z((h_vector.get_x() * current_b_field.get_y() - h_vector.get_y() * current_b_field.get_x()) * inv_b2);
+
+        F32 m_x = out.coil_dipole.get_y() * current_b_field.get_z() - out.coil_dipole.get_z() * current_b_field.get_y();
+        F32 m_y = out.coil_dipole.get_z() * current_b_field.get_x() - out.coil_dipole.get_x() * current_b_field.get_z();
+        F32 m_z = out.coil_dipole.get_x() * current_b_field.get_y() - out.coil_dipole.get_y() * current_b_field.get_x();
+
+        out.wheels_torque.set_x(required_torque.get_x() - m_x);
+        out.wheels_torque.set_y(required_torque.get_y() - m_y);
+        out.wheels_torque.set_z(required_torque.get_z() - m_z);
+      }
+
+      for (int i = 0; i < 3; i++) {
+        F32 r = (i == 0) ? current_rpm.get_x() : (i == 1) ? current_rpm.get_y() : current_rpm.get_z();
+        if (((r < 0) ? -r : r) > high_limit) {
+          out_is_rpm_greater_max = true;
+        }
+      }
+
+      return out;
+    }
 
     Vec3 calculate_b_dot_safe(const Vec3& currentB, const Vec3& prevB, float dt, float J_min = 0.02f) {
       Vec3 b_dot;
@@ -378,6 +452,12 @@ class GNCComponent final : public GNCComponentComponentBase {
     //! Port for transfer magnetometor data
     void MagnesticData_handler(FwIndexType portNum,  //!< The port number
                                const MyFprimeProject::Vec3& data) override;
+
+    //! Handler implementation for ReactionWheelsRPMData
+    //!
+    //! Port for transfer current RPM of reaction wheels
+    void ReactionWheelsRPMData_handler(FwIndexType portNum,
+                                       const MyFprimeProject::Vec3& data) override;
 
   private:
     // ----------------------------------------------------------------------

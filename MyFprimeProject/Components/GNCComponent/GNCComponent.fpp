@@ -122,6 +122,11 @@ module MyFprimeProject {
         is_magnestic: bool
     )
 
+    @ Port for transfer current RPM of reaction wheels
+    port ReactionWheelsRPMDataPort(
+        data: Vec3
+    )
+
     @ Component for Guidance, Navigation and Control of spaceship
     active component GNCComponent {
 
@@ -130,6 +135,9 @@ module MyFprimeProject {
 
         @ Derivative coefficient for PD controller
         param DGain: Vec3
+
+        @ Desaturation K coefficient
+        param KDesat: F32
 
         @ Max Torque which GNC can set to reaction wheels
         param MaxTorque: F32
@@ -143,6 +151,15 @@ module MyFprimeProject {
         param EMA_Alpha: F32
 
         param TimeToStabilizationInSafeMode_Ms: U32
+
+        @ Maximum load of reaction wheels in percent (0-100%)
+        param MaxReactionWheelsSaturationPercent: U32
+
+        @ Minimum load of reaction wheels in percent (0-100%)
+        param MinReactionWheelsSaturationPercent: U32
+
+        @ Max Rotation Per Minute (RPM) of reaction wheels
+        param ReactionWheelsMaxRPM:         F32
 
         # ---------------- Commands and Events ---------------
 
@@ -197,6 +214,9 @@ module MyFprimeProject {
         @ Last provided momemnt to magnestic
         telemetry TlmControlMagnesticMoment:      Vec3 id 9
 
+        @ Is reaction wheels in unload state
+        telemetry TlmIsReactionWheelsOnUnload:    bool id 10
+
         # --------------- Input Ports ----------------
 
         @ Port for transfer data from gyroscop to GNC component. \
@@ -220,6 +240,9 @@ module MyFprimeProject {
         @ Port for transfer magnetometor data
         sync input port MagnesticData:      MagnesticDataPort
 
+        @ Port for transfer current RPM of reaction wheels
+        sync input port ReactionWheelsRPMData:  ReactionWheelsRPMDataPort
+
         @ GNC Tick Port. Should called every 10 ms
         sync input port schedIn:            Svc.Sched
 
@@ -230,9 +253,6 @@ module MyFprimeProject {
 
         @ Port for transfer moment to magnestic calculated by GNC component
         output port MagnesticOut:   MagnesticCommandPort
-
-        @ Port for transfer type of out from GNC component (magnestic or not)
-        output port IsMagnesticOut: IsMagnesticCommandPort
 
         ###############################################################################
         # Standard AC Ports: Required for Channels, Events, Commands, and Parameters  #

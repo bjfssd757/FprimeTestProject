@@ -141,7 +141,13 @@ void GNCComponent ::MagnesticData_handler(FwIndexType portNum, const MyFprimePro
     m_current_b_field = new_b_field;
 }
 
+void GNCComponent ::ReactionWheelsRPMData_handler(FwIndexType portNum, const MyFprimeProject::Vec3& data) {
+    m_current_reaction_wheels_rpm = data;
+}
+
 void GNCComponent ::schedIn_handler(FwIndexType portNum, U32 context) {
+    m_dt_ms = this->to_ms(this->getTime()) - m_last_ms;
+
     this->tlmWrite_TlmECCurrentMemoryCorrections(total_correction_memory);
 
     WayPoint current_point = this->make_current_way_point();
@@ -156,7 +162,29 @@ void GNCComponent ::schedIn_handler(FwIndexType portNum, U32 context) {
 
     this->tlmWrite_TlmCurrentGncMode(gnc_mode);
 
-    
+    Fw::ParamValid valid;
+    F32 max_torque = this->paramGet_MaxTorque(valid);
+    m_max_torque = max_torque;
+    if (valid == Fw::ParamValid::INVALID) {
+        max_torque = 0.005f;
+        m_max_torque = 0.005f;
+    }
+
+    U32 max_saturation = this->paramGet_MaxReactionWheelsSaturationPercent(valid);
+    if (valid == Fw::ParamValid::INVALID) max_saturation = 70;
+
+    U32 min_saturation = this->paramGet_MinReactionWheelsSaturationPercent(valid);
+    if (valid == Fw::ParamValid::INVALID) min_saturation = 20;
+
+    F32 max_rpm = this->paramGet_ReactionWheelsMaxRPM(valid);
+    if (valid == Fw::ParamValid::INVALID) {
+        gnc_mode = GncMode::SAFE;
+        m_gnc_mode = GncMode::SAFE;
+    }
+
+    m_max_rpm = max_rpm;
+    m_max_saturation_percent = max_saturation;
+    m_min_saturation_percent = min_saturation;
 
     switch (gnc_mode) {
         case GncMode::OFF:
@@ -171,6 +199,8 @@ void GNCComponent ::schedIn_handler(FwIndexType portNum, U32 context) {
         case GncMode::SAFE:
             this->LOOP_safe_mode();
     }
+
+    m_last_ms = this->to_ms(this->getTime());
 }
 
 void GNCComponent ::LOOP_safe_mode() {
@@ -195,7 +225,6 @@ void GNCComponent ::LOOP_safe_mode() {
 
     this->tlmWrite_TlmControlMagnesticMoment(moment);
     this->MagnesticOut_out(0, moment);
-    this->IsMagnesticOut_out(0, true);
 }
 
 void GNCComponent ::LOOP_detumble_mode() {
@@ -216,14 +245,12 @@ void GNCComponent ::LOOP_detumble_mode() {
     Vec3 Kd = this->paramGet_DGain(valid);
     if (valid == Fw::ParamValid::INVALID) {
         m_gnc_mode = GncMode::SAFE;
-        this->tlmWrite_TlmCurrentGncMode(GncMode::SAFE);
         return;
     }
     
     Vec3 Kp = this->paramGet_PGain(valid);
     if (valid == Fw::ParamValid::INVALID) {
         m_gnc_mode = GncMode::SAFE;
-        this->tlmWrite_TlmCurrentGncMode(GncMode::SAFE);
         return;
     }
 
@@ -243,9 +270,32 @@ void GNCComponent ::LOOP_detumble_mode() {
 
     torque = this->clamp_vf(torque, max_torque);
 
-    this->tlmWrite_TlmControlTorque(torque);
-    this->TorqueOut_out(0, torque);
-    this->IsMagnesticOut_out(0, false);
+    ProtectedObject<F32>::Status status_max_rpm;
+    F32 max_rpm = m_max_rpm.get(6000.0f, status_max_rpm);
+
+    ProtectedObject<U32>::Status status_percent;
+    U32 min_percent = m_min_saturation_percent.get(20, status_percent);
+    U32 max_percent = m_max_saturation_percent.get(80, status_percent);
+
+    bool is_rpm_greater_max_percent;
+    CombinedTorque res_torque = this->calculate_dual_actuator_output(
+        torque,
+        m_current_reaction_wheels_rpm,
+        m_current_b_field,
+        max_rpm,
+        static_cast<F32>(min_percent) * 0.01f,
+        static_cast<F32>(max_percent) * 0.01f,
+        is_rpm_greater_max_percent
+    );
+
+    if (is_rpm_greater_max_percent) {
+        m_gnc_mode = GncMode::DETUMBLE;
+    }
+
+    this->tlmWrite_TlmControlTorque(res_torque.wheels_torque);
+    this->tlmWrite_TlmControlMagnesticMoment(res_torque.coil_dipole);
+    this->MagnesticOut_out(0, res_torque.coil_dipole);
+    this->TorqueOut_out(0, res_torque.wheels_torque);
 }
 
 void GNCComponent ::LOOP_pointing_mode() {
@@ -261,7 +311,6 @@ void GNCComponent ::LOOP_pointing_mode() {
 
     if (status == ProtectedObject<WayPoint>::Status::CORRUPTED) {
         m_gnc_mode = GncMode::SAFE;
-        this->tlmWrite_TlmCurrentGncMode(GncMode::SAFE);
         return;
     }
 
@@ -278,7 +327,6 @@ void GNCComponent ::LOOP_pointing_mode() {
     Vec3 Kd = this->paramGet_DGain(valid);
     if (valid == Fw::ParamValid::INVALID) {
         m_gnc_mode = GncMode::SAFE;
-        this->tlmWrite_TlmCurrentGncMode(GncMode::SAFE);
         return;
     }
     
@@ -305,9 +353,32 @@ void GNCComponent ::LOOP_pointing_mode() {
 
     torque = this->clamp_vf(torque, max_torque);
 
-    this->tlmWrite_TlmControlTorque(torque);
-    this->TorqueOut_out(0, torque);
-    this->IsMagnesticOut_out(0, false);
+    ProtectedObject<F32>::Status status_max_rpm;
+    F32 max_rpm = m_max_rpm.get(6000.0f, status_max_rpm);
+
+    ProtectedObject<U32>::Status status_percent;
+    U32 min_percent = m_min_saturation_percent.get(20, status_percent);
+    U32 max_percent = m_max_saturation_percent.get(80, status_percent);
+
+    bool is_rpm_greater_max_percent;
+    CombinedTorque res_torque = this->calculate_dual_actuator_output(
+        torque,
+        m_current_reaction_wheels_rpm,
+        m_current_b_field,
+        max_rpm,
+        static_cast<F32>(min_percent) * 0.01f,
+        static_cast<F32>(max_percent) * 0.01f,
+        is_rpm_greater_max_percent
+    );
+
+    if (is_rpm_greater_max_percent) {
+        m_gnc_mode = GncMode::DETUMBLE;
+    }
+
+    this->tlmWrite_TlmControlTorque(res_torque.wheels_torque);
+    this->tlmWrite_TlmControlMagnesticMoment(res_torque.coil_dipole);
+    this->MagnesticOut_out(0, res_torque.coil_dipole);
+    this->TorqueOut_out(0, res_torque.wheels_torque);
 }
 
 // ----------------------------------------------------------------------
