@@ -6,6 +6,11 @@ module MyFprimeProject {
         z: F32
     }
 
+    struct Vec7 {
+        quaterion: Quaternion @< Spacecraft orientation
+        drifting: Vec3 @< Sensor drifting
+    }
+
     struct Quaternion {
         w: F32
         x: F32
@@ -25,10 +30,30 @@ module MyFprimeProject {
 
     @ Way point for provided time
     struct WayPoint {
-        target_time: U32 @< Target moment (ms) of mission execution
-        position: Vec3 @< Target position in this moment
+        target_time: U64 @< Target moment (ms) of mission execution
         angular_velocity: Vec3 @< Target angular velocity in this moment
         orientation: Quaternion @< Target orientation (quaterion) in this moment
+    }
+
+    struct BatteryState {
+        SoC: F32 @< State of Charge battery
+        voltage: F32
+        current_amperage: F32 @< Current battery's ampere
+        status: BatteryStatus
+    }
+
+    enum BatteryStatus {
+        @ Battery level is normal
+        OK
+
+        @ Battery level is low
+        LOW
+
+        @ Battery level is critical
+        CRITICAL
+
+        @ Battery on charging
+        CHARGE
     }
 
     enum GncMode {
@@ -51,17 +76,24 @@ module MyFprimeProject {
     @ GNC uses this data as current angular velocity for EKF prediction
     port GyroSensorDataPort(
         data: GyroData
+        is_valid: bool
     )
 
     @ Port for transfer data from star tracker to GNC component. \
     @ GNC use this data as current orientation
     port StarSensorDataPort(
         data: OrientData
+        is_valid: bool
     )
 
     @ Port for transfer torque calculated by GNC component
     port TorqueCommandPort(
         torque: Vec3
+    )
+
+    @ Port for transfer moment to magnestic calculated by GNC component
+    port MagnesticCommandPort(
+        moment: Vec3
     )
 
     @ Port for transfer vector to Sun from sensor/tracker
@@ -74,6 +106,22 @@ module MyFprimeProject {
         normal: Vec3
     )
 
+    @ Port for transfer battery state.
+    @ GNC use this state for managing system
+    port BatteryStatePort(
+        battery_state: BatteryState
+    )
+
+    @ Port for transfer magnetometor data
+    port MagnesticDataPort(
+        data: Vec3
+    )
+
+    @ Port for transfer type of out from GNC component (magnestic or not)
+    port IsMagnesticCommandPort(
+        is_magnestic: bool
+    )
+
     @ Component for Guidance, Navigation and Control of spaceship
     active component GNCComponent {
 
@@ -84,19 +132,17 @@ module MyFprimeProject {
         param DGain: Vec3
 
         @ Max Torque which GNC can set to reaction wheels
-        param MaxTorque: F64
+        param MaxTorque: F32
 
-        @ Process noise
-        @ (How much do we trust the model?)
-        param Q_Sigma: Vec3
+        param MinBatterySoC: F32
 
-        @ Gyroscop (or other sensors which provide current angular velocity) sensor noise \
-        @ (How much do we trust the gyro?)
-        param R_Gyro_Sigma: Vec3
+        param MinBatteryVoltage: F32
 
-        @ Star (or other sensors which provide current orientation in the space) sensor noise \
-        @ (How much do we trust the star tracker)
-        param R_Star_Sigma: Vec3
+        param MinBatteryAmpere: F32
+
+        param EMA_Alpha: F32
+
+        param TimeToStabilizationInSafeMode_Ms: U32
 
         # ---------------- Commands and Events ---------------
 
@@ -129,7 +175,7 @@ module MyFprimeProject {
         @ How many corrections made by ECC in GNC component
         telemetry TlmECCurrentMemoryCorrections:    U32 id 3
 
-        # ---------- Controller and Filter Telemetry ----------
+        # ---------- PD Controller Telemetry ----------
 
         @ Error by angles
         telemetry TlmAngleError:                 Vec3 id 4
@@ -144,6 +190,12 @@ module MyFprimeProject {
 
         @ Current GNC Mode
         telemetry TlmCurrentGncMode:             GncMode id 7
+
+        @ Is Sun lost
+        telemetry TlmSunLost:                     bool id 8
+
+        @ Last provided momemnt to magnestic
+        telemetry TlmControlMagnesticMoment:      Vec3 id 9
 
         # --------------- Input Ports ----------------
 
@@ -161,13 +213,26 @@ module MyFprimeProject {
         @ Port for transfer normalize vector of all sun panels on the spacecraft
         sync input port SunPanelsNormalIn:  SunPanelsNormalPort
 
+        @ Port for transfer battery state.
+        @ GNC use this state for managing system
+        sync input port BatteryStateIn:     BatteryStatePort
+
+        @ Port for transfer magnetometor data
+        sync input port MagnesticData:      MagnesticDataPort
+
         @ GNC Tick Port. Should called every 10 ms
         sync input port schedIn:            Svc.Sched
 
         # -------------- Output Ports ---------------
 
         @ Port for transfer torque calculated by GNC component
-        output port TorqueOut: TorqueCommandPort
+        output port TorqueOut:      TorqueCommandPort
+
+        @ Port for transfer moment to magnestic calculated by GNC component
+        output port MagnesticOut:   MagnesticCommandPort
+
+        @ Port for transfer type of out from GNC component (magnestic or not)
+        output port IsMagnesticOut: IsMagnesticCommandPort
 
         ###############################################################################
         # Standard AC Ports: Required for Channels, Events, Commands, and Parameters  #

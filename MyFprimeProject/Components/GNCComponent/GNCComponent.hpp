@@ -8,9 +8,11 @@
 #define MyFprimeProject_GNCComponent_HPP
 
 #include <array>
+#include <cmath>
 #include <cstring>
-#include "Eigen/Core"
+#include "Fw/Time/Time.hpp"
 #include "Fw/Types/BasicTypes.h"
+#include "MyFprimeProject/Components/GNCComponent/BatteryStateSerializableAc.hpp"
 #include "MyFprimeProject/Components/GNCComponent/GNCComponentComponentAc.hpp"
 #include "MyFprimeProject/Components/GNCComponent/GncModeEnumAc.hpp"
 #include "MyFprimeProject/Components/GNCComponent/GyroDataSerializableAc.hpp"
@@ -18,13 +20,11 @@
 #include "MyFprimeProject/Components/GNCComponent/Vec3SerializableAc.hpp"
 #include "MyFprimeProject/Components/GNCComponent/WayPointSerializableAc.hpp"
 #include <atomic>
-#include <Eigen/Dense>
-#include <Eigen/Geometry>
+#include <type_traits>
 
 namespace MyFprimeProject {
 
 extern std::atomic<U32> total_correction_memory;
-extern std::atomic<U32> current_mission_time_ms;
 
 template<typename T>
 struct ProtectedObject {
@@ -40,6 +40,10 @@ private:
   inline void update_mirror() {
     const U64* raw = reinterpret_cast<U64*>(&m_copy1);
     for (size_t i = 0; i < Words; ++i) {
+      if (std::is_polymorphic<T>::value) {
+        m_mirror[i] = raw[i];
+        continue;
+      }
       m_mirror[i] = ~raw[i];
     }
   }
@@ -47,7 +51,7 @@ private:
 public:
   enum Status {OK, RESTORED, CORRUPTED};
 
-  ProtectedObject<T>& operator=(const T v) {
+  ProtectedObject<T>& operator=(const T& v) {
     set(v);
     return *this;
   }
@@ -67,9 +71,9 @@ public:
   //! Check, restore (if need) and return value OR set and return given base value if can't restore corrupted value.
   //! Return value AND state in given param if provided.
   [[nodiscard]]
-  inline T get(T base, Status& out_status) {
+  inline T get(const T& base, Status& out_status) {
     // Best way: value is valid
-    if (__buildin_expect(validated_mirror(), 1)) {
+    if (__builtin_expect(validated_mirror(), 1)) {
       out_status = OK;
       return m_copy1;
     }
@@ -81,22 +85,30 @@ private:
   bool validated_mirror() const {
     const U64* raw = reinterpret_cast<const U64*>(&m_copy1);
     for (size_t i = 0; i < Words; ++i) {
+      if (std::is_polymorphic<T>::value) {
+        if (raw[i] != m_mirror[i]) return false;
+      }
       if (__builtin_expect(raw[i] != ~m_mirror[i], 1)) return false;
     }
     return true;
   }
 
   [[gnu::cold, gnu::noinline]]
-  T repair_and_get(T base, Status& out_status) {
-    bool c12 = (memcmp(&m_copy1, &m_copy2, sizeof(T)) == 0);
-    bool c13 = (memcmp(&m_copy1, &m_copy3, sizeof(T)) == 0);
-    bool c23 = (memcmp(&m_copy2, &m_copy3, sizeof(T)) == 0);
+  T repair_and_get(const T& base, Status& out_status) {
+    auto cmp = [](const T& a, const T& b) {
+      return memcmp(static_cast<const void*>(&a), static_cast<const void*>(&b), sizeof(T)) == 0;
+    };
+
+    bool c12 = cmp(m_copy1, m_copy2);
+    bool c13 = cmp(m_copy1, m_copy3);
+    bool c23 = cmp(m_copy2, m_copy3);
 
     // Error: copy 2 or copy 3 is corrupted, but copy 1 is ok
     if (c12 || c13) {
       m_copy2 = m_copy1;
       m_copy3 = m_copy1;
       update_mirror();
+      total_correction_memory++;
       out_status = RESTORED;
       return m_copy1;
     }
@@ -106,6 +118,7 @@ private:
       m_copy1 = m_copy2;
       m_copy3 = m_copy2;
       update_mirror();
+      total_correction_memory++;
       out_status = RESTORED;
       return m_copy2;
     }
@@ -116,67 +129,190 @@ private:
   }
 };
 
-//! Extend Kalman Filter
-//! S - state size
-//! M - measurement size
-template<int S, int M>
-class EKF {
-  Eigen::Matrix<F32, S, 1> x;
-  Eigen::Matrix<F32, S, S> P;
-  Eigen::Matrix<F32, S, S> Q;
-  Eigen::Matrix<F32, M, M> R;
+class EMA {
+  ProtectedObject<F32> m_alpha;
+  bool m_first_value;
+  F32 m_filtered_value;
 
-  void predict(F32 dt) {
-    Eigen::Matrix<F32, S, S> F = compute_jacobian_F(x, dt);
+public:
+  EMA(F32 alpha = 0.1f) : m_alpha(alpha), m_first_value(true), m_filtered_value(0.0f) {}
 
-    P.normalize() = F * P * F.transpose() + Q;
+  F32 process(F32 input) {
+    if (m_first_value) {
+      m_filtered_value = input;
+      m_first_value = false;
+    } else {
+      ProtectedObject<F32>::Status is_alpha_valid;
+      F32 alpha = m_alpha.get(0.1f, is_alpha_valid);
+
+      if (is_alpha_valid == ProtectedObject<F32>::Status::CORRUPTED) {
+        m_alpha = 0.1f;
+      }
+
+      m_filtered_value = alpha * input + (1.0f - alpha) * m_filtered_value;
+    }
+    return m_filtered_value;
   }
 
-  void update(const Eigen::Matrix<F32, M, 1>& z) {
-    Eigen::Matrix<F32, M, S> H = compute_jacobian_H(x);
-
-    auto S_mat = H * P * H.transpose() + R;
-    Eigen::Matrix<F32, S, M> K = P * H.transpose() * S_mat.inverse();
-
-    x = x + K * (z - h(x));
-
-    P = (Eigen::Matrix<F32, S, S>::Identity() - K * H) * P;
+  void reset() {
+    m_first_value = true;
   }
 
-  static inline Eigen::Matrix<F32, S, S> compute_jacobian_F(Eigen::Matrix<F32, S, 1> target_x, F32 dt) {
-    // TODO
-  }
-
-  static inline Eigen::Matrix<F32, M, S> compute_jacobian_H(Eigen::Matrix<F32, S, 1> target_x) {
-    // TODO
+  void set_alpha(F32 alpha) {
+    m_alpha = alpha;
   }
 };
 
 class GNCComponent final : public GNCComponentComponentBase {
   private:
-    ProtectedObject<WayPoint> m_target_waypoint;
-    ProtectedObject<F64> m_max_torque;
-    ProtectedObject<Vec3> m_proportional_gain;
-    ProtectedObject<Vec3> m_derivative_gain;
-    ProtectedObject<Vec3> m_q_sigma;
-    ProtectedObject<Vec3> m_q_gyro_sigma;
-    ProtectedObject<Vec3> q_star_sigma;
-    ProtectedObject<GncMode> m_gnc_mode;
-    ProtectedObject<Vec3> m_sun_panels_normal;
+    const ProtectedObject<U32> m_dt_ms = 10;
 
-    Vec3 m_current_sun_vector;
+    ProtectedObject<WayPoint> m_target_waypoint;
+    ProtectedObject<F32> m_max_torque;
+    ProtectedObject<GncMode> m_gnc_mode;
+    ProtectedObject<EMA> m_ema_filter;
+
+    bool m_current_orient_valid = true;
+    bool m_current_angular_vel_valid = true;
+
+    Vec3 m_current_sun_normal;
+    Vec3 m_current_sun_panels_normal;
     OrientData m_current_orientation;
     GyroData m_current_angular_velocity;
     Vec3 m_current_position;
+    BatteryState m_current_battery_state;
+    Vec3 m_current_b_field;
+    Vec3 m_prev_b_field;
 
-    inline WayPoint make_current_way_point() const {
+    void LOOP_detumble_mode();
+    void LOOP_safe_mode();
+    void LOOP_pointing_mode();
+
+    Vec3 calculate_b_dot_safe(const Vec3& currentB, const Vec3& prevB, float dt, float J_min = 0.02f) {
+      Vec3 b_dot;
+      b_dot.set_x((currentB.get_x() - prevB.get_x()) / dt);
+      b_dot.set_y((currentB.get_y() - prevB.get_y()) / dt);
+      b_dot.set_z((currentB.get_z() - prevB.get_z()) / dt);
+
+      float b_mag_sq = currentB.get_x() * currentB.get_x() + 
+                      currentB.get_y() * currentB.get_y() + 
+                      currentB.get_z() * currentB.get_z();
+
+      if (b_mag_sq < 1e-12f) return Vec3(0, 0, 0);
+
+      float k = (2.0f * J_min) / b_mag_sq;
+
+      Vec3 dipole;
+      dipole.set_x(-k * b_dot.get_x());
+      dipole.set_y(-k * b_dot.get_y());
+      dipole.set_z(-k * b_dot.get_z());
+
+      return dipole;
+    }
+
+    Vec3 calculate_torque(
+      const Vec3& angle_error,
+      const Vec3& current_angular_vel,
+      const Vec3& target_angular_vel,
+      U64 current_time_ms,
+      U64 target_time_ms,
+      const Vec3& Kd,
+      const Vec3& Kp
+    ) {
+      U64 diff = (target_time_ms > current_time_ms) ? (target_time_ms - current_time_ms) : 1;
+      F32 dt_sec = static_cast<F32>(diff) / 1000.0f;
+
+      if (dt_sec < 0.01f) dt_sec = 0.01f;
+
+      Vec3 torque;
+
+      auto calc_axis = [&](F32 err, F32 cur_v, F32 tar_v, F32 kp_v, F32 kd_v) {
+        F32 v_req = (err * kp_v / dt_sec) + tar_v;
+        return (v_req - cur_v) * kd_v;
+      };
+
+      torque.set_x(calc_axis(angle_error.get_x(), current_angular_vel.get_x(), target_angular_vel.get_x(), Kp.get_x(), Kd.get_x()));
+      torque.set_y(calc_axis(angle_error.get_y(), current_angular_vel.get_y(), target_angular_vel.get_y(), Kp.get_y(), Kd.get_y()));
+      torque.set_z(calc_axis(angle_error.get_z(), current_angular_vel.get_z(), target_angular_vel.get_z(), Kp.get_z(), Kd.get_z()));
+
+      return torque;
+    }
+
+    WayPoint make_current_way_point() const {
       WayPoint point = WayPoint(
-        current_mission_time_ms.load(),
-        m_current_position,
+        to_ms(this->getTime()),
         m_current_angular_velocity.get_angular_rates(),
         m_current_orientation.get_orientation()
       );
       return point;
+    }
+
+    static inline Vec3 get_error_from_vectors(const Vec3& current, const Vec3& target) {
+        Vec3 err;
+        err.set_x(current.get_y() * target.get_z() - current.get_z() * target.get_y());
+        err.set_y(current.get_z() * target.get_x() - current.get_x() * target.get_z());
+        err.set_z(current.get_x() * target.get_y() - current.get_y() * target.get_x());
+        return err;
+    }
+
+    static inline Vec3 get_error_from_quats(const Quaternion& current, const Quaternion& target) {
+        F32 tw = target.get_w(), tx = target.get_x(), ty = target.get_y(), tz = target.get_z();
+        F32 cw = current.get_w(), cx = current.get_x(), cy = current.get_y(), cz = current.get_z();
+
+        float x =  tw * -cx + tx * cw + ty * -cz - tz * -cy;
+        float y =  tw * -cx - tx * -cz + ty * cw + tz * -cx;
+        float z =  tw * -cz + tx * -cy - ty * -cx + tz * cw;
+
+        float dot = cw * tw + cx * tx + cy * ty + cz * tz;
+        return (dot < 0.0f) ? Vec3(-x, -y, -z) : Vec3(x, y, z);
+    }
+
+
+    static inline U64 to_ms(Fw::Time time) {
+      return (static_cast<U64>(time.getSeconds()) * 1000) +
+             (static_cast<U64>(time.getUSeconds()) / 1000);
+    }
+
+    static inline Vec3 calculate_rotation_error(const Vec3& normal_a, const Vec3& normal_b) {
+      Vec3 error_axis;
+      error_axis.set_x(normal_a.get_y() * normal_b.get_z() - normal_a.get_z() * normal_b.get_y());
+      error_axis.set_y(normal_a.get_z() * normal_b.get_x() - normal_a.get_x() * normal_b.get_z());
+      error_axis.set_z(normal_a.get_x() * normal_b.get_y() - normal_a.get_y() * normal_b.get_x());
+
+      if (dot(normal_a, normal_b) < -0.999f) {
+        error_axis.set_x(0.0f);
+      }
+
+      return error_axis;
+    }
+
+    static inline void vec_normalize(Vec3& v) {
+      float x2 = v.get_x() * v.get_x() + v.get_y() * v.get_y() + v.get_z() * v.get_z();
+      if (x2 < 0.0001f) return;
+
+      float invLen = 1.0f / std::sqrt(x2); 
+      v.set(v.get_x() * invLen, v.get_y() * invLen, v.get_z() * invLen);
+    }
+
+    static inline F32 dot(const Vec3& v1, const Vec3& v2) {
+      F32 v1x = v1.get_x(), v1y = v1.get_y(), v1z = v1.get_z();
+      F32 v2x = v2.get_x(), v2y = v2.get_y(), v2z = v2.get_z();
+
+      return v1x * v2x + v1y * v2y + v1z * v2z;
+    }
+
+    //! Clamp vector by max (max type is F32)
+    inline static Vec3 clamp_vf(const Vec3& v, const F32 max) {
+      Vec3 res;
+      if (v.get_x() > max) res.set_x(max);
+      if (v.get_y() > max) res.set_y(max);
+      if (v.get_z() > max) res.set_z(max);
+
+      if (v.get_x() < -max) res.set_x(-max);
+      if (v.get_y() < -max) res.set_y(-max);
+      if (v.get_z() < -max) res.set_z(-max);
+
+      return res;
     }
   public:
     // ----------------------------------------------------------------------
@@ -200,14 +336,16 @@ class GNCComponent final : public GNCComponentComponentBase {
     //! Port for transfer data from gyroscop to GNC component. \
       //! GNC uses this data as current angular velocity for EKF prediction
     void GyroDataIn_handler(FwIndexType portNum,  //!< The port number
-                            const MyFprimeProject::GyroData& data) override;
+                            const MyFprimeProject::GyroData& data,
+                            bool is_valid) override;
 
     //! Handler implementation for StarTrackerDataIn
     //!
     //! Port for transfer data from star tracker to GNC component. \
       //! GNC use this data as current orientation
     void StarTrackerDataIn_handler(FwIndexType portNum,  //!< The port number
-                                   const MyFprimeProject::OrientData& data) override;
+                                   const MyFprimeProject::OrientData& data,
+                                  bool is_valid) override;
 
     //! Handler implementation for SunPanelsNormalIn
     //!
@@ -227,6 +365,19 @@ class GNCComponent final : public GNCComponentComponentBase {
     void schedIn_handler(FwIndexType portNum,  //!< The port number
                          U32 context           //!< The call order
                          ) override;
+
+    //! Handler implementation for BatteryStateIn
+    //!
+    //! Port for transfer battery state.
+    //! GNC use this state for managing system
+    void BatteryStateIn_handler(FwIndexType portNum,  //!< The port number
+                                const MyFprimeProject::BatteryState& battery_state) override;
+
+    //! Handler implementation for MagnesticData
+    //!
+    //! Port for transfer magnetometor data
+    void MagnesticData_handler(FwIndexType portNum,  //!< The port number
+                               const MyFprimeProject::Vec3& data) override;
 
   private:
     // ----------------------------------------------------------------------
