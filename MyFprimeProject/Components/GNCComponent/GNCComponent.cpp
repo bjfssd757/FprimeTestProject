@@ -277,7 +277,7 @@ void GNCComponent ::LOOP_detumble_mode() {
     U32 min_percent = m_min_saturation_percent.get(20, status_percent);
     U32 max_percent = m_max_saturation_percent.get(80, status_percent);
 
-    bool is_rpm_greater_max_percent;
+    bool is_rpm_greater_max_percent = false;
     CombinedTorque res_torque = this->calculate_dual_actuator_output(
         torque,
         m_current_reaction_wheels_rpm,
@@ -360,7 +360,7 @@ void GNCComponent ::LOOP_pointing_mode() {
     U32 min_percent = m_min_saturation_percent.get(20, status_percent);
     U32 max_percent = m_max_saturation_percent.get(80, status_percent);
 
-    bool is_rpm_greater_max_percent;
+    bool is_rpm_greater_max_percent = false;
     CombinedTorque res_torque = this->calculate_dual_actuator_output(
         torque,
         m_current_reaction_wheels_rpm,
