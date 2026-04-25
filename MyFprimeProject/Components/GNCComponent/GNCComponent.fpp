@@ -152,10 +152,10 @@ module MyFprimeProject {
 
         param TimeToStabilizationInSafeMode_Ms: U32
 
-        @ Maximum load of reaction wheels in percent (0-100%)
+        @ Maximum saturation of reaction wheels in percent (0-100%)
         param MaxReactionWheelsSaturationPercent: U32
 
-        @ Minimum load of reaction wheels in percent (0-100%)
+        @ Minimum saturation of reaction wheels in percent (0-100%)
         param MinReactionWheelsSaturationPercent: U32
 
         @ Max Rotation Per Minute (RPM) of reaction wheels
