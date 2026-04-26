@@ -1,4 +1,4 @@
-module MyFprimeProject {
+module GCProject {
 
     struct Vec3 {
         x: F32
@@ -128,7 +128,7 @@ module MyFprimeProject {
     )
 
     @ Component for Guidance, Navigation and Control of spaceship
-    active component GNCComponent {
+    active component GCComponent {
 
         @ Proportial coefficient for PD controller
         param PGain: Vec3

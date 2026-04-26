@@ -16,9 +16,9 @@
 
 register_fprime_library(
     AUTOCODER_INPUTS
-        "${CMAKE_CURRENT_LIST_DIR}/GNCComponent.fpp"
+        "${CMAKE_CURRENT_LIST_DIR}/GCComponent.fpp"
     SOURCES
-        "${CMAKE_CURRENT_LIST_DIR}/GNCComponent.cpp"
+        "${CMAKE_CURRENT_LIST_DIR}/GCComponent.cpp"
     DEPENDS
         eigen
 #   DEPENDS
@@ -28,10 +28,10 @@ register_fprime_library(
 ### Unit Tests ###
 # register_fprime_ut(
 #     AUTOCODER_INPUTS
-#         "${CMAKE_CURRENT_LIST_DIR}/GNCComponent.fpp"
+#         "${CMAKE_CURRENT_LIST_DIR}/GCComponent.fpp"
 #     SOURCES
-#         "${CMAKE_CURRENT_LIST_DIR}/test/ut/GNCComponentTestMain.cpp"
-#         "${CMAKE_CURRENT_LIST_DIR}/test/ut/GNCComponentTester.cpp"
+#         "${CMAKE_CURRENT_LIST_DIR}/test/ut/GCComponentTestMain.cpp"
+#         "${CMAKE_CURRENT_LIST_DIR}/test/ut/GCComponentTester.cpp"
 #     DEPENDS
 #         STest # For rules-based testing
 #     UT_AUTO_HELPERS

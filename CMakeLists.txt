@@ -1,10 +1,10 @@
 ####
-# This sets up the build system for the 'MyFprimeProject' project, including
+# This sets up the build system for the 'GCProject' project, including
 # components and deployments from project.cmake. In addition, it imports the core F Prime components.
 ####
 
 cmake_minimum_required(VERSION 3.24.2)
-project(MyFprimeProject C CXX)
+project(GCProject C CXX)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -20,4 +20,4 @@ fprime_setup_included_code()
 
 
 # This includes project-wide objects
-add_fprime_subdirectory("${CMAKE_CURRENT_LIST_DIR}/MyFprimeProject")
+add_fprime_subdirectory("${CMAKE_CURRENT_LIST_DIR}/GCProject")

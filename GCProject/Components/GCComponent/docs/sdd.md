@@ -1,4 +1,4 @@
-# MyFprimeProject::GNCComponent
+# GCProject::GCComponent
 
 Component for Guidance, Navigation and Control of spaceship
 

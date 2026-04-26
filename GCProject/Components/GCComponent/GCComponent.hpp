@@ -1,11 +1,11 @@
 // ======================================================================
-// \title  GNCComponent.hpp
+// \title  GCComponent.hpp
 // \author user
-// \brief  hpp file for GNCComponent component implementation class
+// \brief  hpp file for GCComponent component implementation class
 // ======================================================================
 
-#ifndef MyFprimeProject_GNCComponent_HPP
-#define MyFprimeProject_GNCComponent_HPP
+#ifndef GCProject_GCComponent_HPP
+#define GCProject_GCComponent_HPP
 
 #include <array>
 #include <cmath>
@@ -13,17 +13,17 @@
 #include "Fw/Prm/ParamValidEnumAc.hpp"
 #include "Fw/Time/Time.hpp"
 #include "Fw/Types/BasicTypes.h"
-#include "MyFprimeProject/Components/GNCComponent/BatteryStateSerializableAc.hpp"
-#include "MyFprimeProject/Components/GNCComponent/GNCComponentComponentAc.hpp"
-#include "MyFprimeProject/Components/GNCComponent/GncModeEnumAc.hpp"
-#include "MyFprimeProject/Components/GNCComponent/GyroDataSerializableAc.hpp"
-#include "MyFprimeProject/Components/GNCComponent/OrientDataSerializableAc.hpp"
-#include "MyFprimeProject/Components/GNCComponent/Vec3SerializableAc.hpp"
-#include "MyFprimeProject/Components/GNCComponent/WayPointSerializableAc.hpp"
+#include "GCProject/Components/GCComponent/BatteryStateSerializableAc.hpp"
+#include "GCProject/Components/GCComponent/GCComponentComponentAc.hpp"
+#include "GCProject/Components/GCComponent/GncModeEnumAc.hpp"
+#include "GCProject/Components/GCComponent/GyroDataSerializableAc.hpp"
+#include "GCProject/Components/GCComponent/OrientDataSerializableAc.hpp"
+#include "GCProject/Components/GCComponent/Vec3SerializableAc.hpp"
+#include "GCProject/Components/GCComponent/WayPointSerializableAc.hpp"
 #include <atomic>
 #include <type_traits>
 
-namespace MyFprimeProject {
+namespace GCProject {
 
 extern std::atomic<U32> total_correction_memory;
 
@@ -164,7 +164,7 @@ public:
   }
 };
 
-class GNCComponent final : public GNCComponentComponentBase {
+class GCComponent final : public GCComponentComponentBase {
   private:
     U32 m_dt_ms = 0;
     U64 m_last_ms = 0;
@@ -393,12 +393,12 @@ class GNCComponent final : public GNCComponentComponentBase {
     // Component construction and destruction
     // ----------------------------------------------------------------------
 
-    //! Construct GNCComponent object
-    GNCComponent(const char* const compName  //!< The component name
+    //! Construct GCComponent object
+    GCComponent(const char* const compName  //!< The component name
     );
 
-    //! Destroy GNCComponent object
-    ~GNCComponent();
+    //! Destroy GCComponent object
+    ~GCComponent();
 
   private:
     // ----------------------------------------------------------------------
@@ -410,7 +410,7 @@ class GNCComponent final : public GNCComponentComponentBase {
     //! Port for transfer data from gyroscop to GNC component. \
       //! GNC uses this data as current angular velocity for EKF prediction
     void GyroDataIn_handler(FwIndexType portNum,  //!< The port number
-                            const MyFprimeProject::GyroData& data,
+                            const GCProject::GyroData& data,
                             bool is_valid) override;
 
     //! Handler implementation for StarTrackerDataIn
@@ -418,20 +418,20 @@ class GNCComponent final : public GNCComponentComponentBase {
     //! Port for transfer data from star tracker to GNC component. \
       //! GNC use this data as current orientation
     void StarTrackerDataIn_handler(FwIndexType portNum,  //!< The port number
-                                   const MyFprimeProject::OrientData& data,
+                                   const GCProject::OrientData& data,
                                   bool is_valid) override;
 
     //! Handler implementation for SunPanelsNormalIn
     //!
     //! Port for transfer normalize vector of all sun panels on the spacecraft
     void SunPanelsNormalIn_handler(FwIndexType portNum,  //!< The port number
-                                   const MyFprimeProject::Vec3& normal) override;
+                                   const GCProject::Vec3& normal) override;
 
     //! Handler implementation for SunVectorIn
     //!
     //! Port for transfer vector to Sun from sensor/tracker
     void SunVectorIn_handler(FwIndexType portNum,  //!< The port number
-                             const MyFprimeProject::Vec3& position) override;
+                             const GCProject::Vec3& position) override;
 
     //! Handler implementation for schedIn
     //!
@@ -445,19 +445,19 @@ class GNCComponent final : public GNCComponentComponentBase {
     //! Port for transfer battery state.
     //! GNC use this state for managing system
     void BatteryStateIn_handler(FwIndexType portNum,  //!< The port number
-                                const MyFprimeProject::BatteryState& battery_state) override;
+                                const GCProject::BatteryState& battery_state) override;
 
     //! Handler implementation for MagnesticData
     //!
     //! Port for transfer magnetometor data
     void MagnesticData_handler(FwIndexType portNum,  //!< The port number
-                               const MyFprimeProject::Vec3& data) override;
+                               const GCProject::Vec3& data) override;
 
     //! Handler implementation for ReactionWheelsRPMData
     //!
     //! Port for transfer current RPM of reaction wheels
     void ReactionWheelsRPMData_handler(FwIndexType portNum,
-                                       const MyFprimeProject::Vec3& data) override;
+                                       const GCProject::Vec3& data) override;
 
   private:
     // ----------------------------------------------------------------------
@@ -469,14 +469,14 @@ class GNCComponent final : public GNCComponentComponentBase {
     //! Command to set target state for specific time in ms by start of the mission
     void SET_TARGET_WAYPOINT_cmdHandler(FwOpcodeType opCode,  //!< The opcode
                                      U32 cmdSeq,           //!< The command sequence number
-                                     MyFprimeProject::WayPoint target_state) override;
+                                     GCProject::WayPoint target_state) override;
 
     //! Handler implementation for command SET_MODE
     void SET_MODE_cmdHandler(FwOpcodeType opCode,  //!< The opcode
                              U32 cmdSeq,           //!< The command sequence number
-                             MyFprimeProject::GncMode mode) override;
+                             GCProject::GncMode mode) override;
 };
 
-}  // namespace MyFprimeProject
+}  // namespace GCProject
 
 #endif

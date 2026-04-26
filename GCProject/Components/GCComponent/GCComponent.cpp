@@ -1,19 +1,19 @@
 // ======================================================================
-// \title  GNCComponent.cpp
+// \title  GCComponent.cpp
 // \author user
-// \brief  cpp file for GNCComponent component implementation class
+// \brief  cpp file for GCComponent component implementation class
 // ======================================================================
 
-#include "MyFprimeProject/Components/GNCComponent/GNCComponent.hpp"
+#include "GCProject/Components/GCComponent/GCComponent.hpp"
 #include "Fw/Prm/ParamValidEnumAc.hpp"
-#include "MyFprimeProject/Components/GNCComponent/GncModeEnumAc.hpp"
-#include "MyFprimeProject/Components/GNCComponent/GyroDataSerializableAc.hpp"
-#include "MyFprimeProject/Components/GNCComponent/OrientDataSerializableAc.hpp"
-#include "MyFprimeProject/Components/GNCComponent/QuaternionSerializableAc.hpp"
-#include "MyFprimeProject/Components/GNCComponent/Vec3SerializableAc.hpp"
-#include "MyFprimeProject/Components/GNCComponent/WayPointSerializableAc.hpp"
+#include "GCProject/Components/GCComponent/GncModeEnumAc.hpp"
+#include "GCProject/Components/GCComponent/GyroDataSerializableAc.hpp"
+#include "GCProject/Components/GCComponent/OrientDataSerializableAc.hpp"
+#include "GCProject/Components/GCComponent/QuaternionSerializableAc.hpp"
+#include "GCProject/Components/GCComponent/Vec3SerializableAc.hpp"
+#include "GCProject/Components/GCComponent/WayPointSerializableAc.hpp"
 
-namespace MyFprimeProject {
+namespace GCProject {
 
 std::atomic<U32> total_correction_memory(0);
 
@@ -21,7 +21,7 @@ std::atomic<U32> total_correction_memory(0);
 // Component construction and destruction
 // ----------------------------------------------------------------------
 
-GNCComponent ::GNCComponent(const char* const compName) : GNCComponentComponentBase(compName) {
+GCComponent ::GCComponent(const char* const compName) : GCComponentComponentBase(compName) {
     Fw::ParamValid valid;
     F32 alpha = this->paramGet_EMA_Alpha(valid);
     if (valid == Fw::ParamValid::VALID) {
@@ -29,13 +29,13 @@ GNCComponent ::GNCComponent(const char* const compName) : GNCComponentComponentB
     }
 }
 
-GNCComponent ::~GNCComponent() {}
+GCComponent ::~GCComponent() {}
 
 // ----------------------------------------------------------------------
 // Handler implementations for typed input ports
 // ----------------------------------------------------------------------
 
-void GNCComponent ::GyroDataIn_handler(FwIndexType portNum, const MyFprimeProject::GyroData& data, bool is_valid) {
+void GCComponent ::GyroDataIn_handler(FwIndexType portNum, const GCProject::GyroData& data, bool is_valid) {
     if (is_valid) {
         ProtectedObject<EMA>::Status status;
         EMA ema = m_ema_filter.get(EMA(0.1f), status);
@@ -66,7 +66,7 @@ void GNCComponent ::GyroDataIn_handler(FwIndexType portNum, const MyFprimeProjec
     }
 }
 
-void GNCComponent ::StarTrackerDataIn_handler(FwIndexType portNum, const MyFprimeProject::OrientData& data, bool is_valid) {
+void GCComponent ::StarTrackerDataIn_handler(FwIndexType portNum, const GCProject::OrientData& data, bool is_valid) {
     if (is_valid) {
         ProtectedObject<EMA>::Status status;
         EMA ema = m_ema_filter.get(EMA(0.1f), status);
@@ -98,17 +98,17 @@ void GNCComponent ::StarTrackerDataIn_handler(FwIndexType portNum, const MyFprim
     }
 }
 
-void GNCComponent ::SunPanelsNormalIn_handler(FwIndexType portNum, const MyFprimeProject::Vec3& normal) {
+void GCComponent ::SunPanelsNormalIn_handler(FwIndexType portNum, const GCProject::Vec3& normal) {
     m_current_sun_panels_normal = normal;
 }
 
-void GNCComponent ::SunVectorIn_handler(FwIndexType portNum, const MyFprimeProject::Vec3& position) {
+void GCComponent ::SunVectorIn_handler(FwIndexType portNum, const GCProject::Vec3& position) {
     Vec3 p = position;
     this->vec_normalize(p);
     m_current_sun_normal = p;
 }
 
-void GNCComponent ::BatteryStateIn_handler(FwIndexType portNum, const BatteryState& battery_state) {
+void GCComponent ::BatteryStateIn_handler(FwIndexType portNum, const BatteryState& battery_state) {
     m_current_battery_state = battery_state;
 
     Fw::ParamValid valid;
@@ -122,7 +122,7 @@ void GNCComponent ::BatteryStateIn_handler(FwIndexType portNum, const BatterySta
     }
 }
 
-void GNCComponent ::MagnesticData_handler(FwIndexType portNum, const MyFprimeProject::Vec3& data) {
+void GCComponent ::MagnesticData_handler(FwIndexType portNum, const GCProject::Vec3& data) {
     m_prev_b_field = m_current_b_field;
     Vec3 new_b_field;
     ProtectedObject<EMA>::Status status;
@@ -141,11 +141,11 @@ void GNCComponent ::MagnesticData_handler(FwIndexType portNum, const MyFprimePro
     m_current_b_field = new_b_field;
 }
 
-void GNCComponent ::ReactionWheelsRPMData_handler(FwIndexType portNum, const MyFprimeProject::Vec3& data) {
+void GCComponent ::ReactionWheelsRPMData_handler(FwIndexType portNum, const GCProject::Vec3& data) {
     m_current_reaction_wheels_rpm = data;
 }
 
-void GNCComponent ::schedIn_handler(FwIndexType portNum, U32 context) {
+void GCComponent ::schedIn_handler(FwIndexType portNum, U32 context) {
     m_dt_ms = this->to_ms(this->getTime()) - m_last_ms;
 
     this->tlmWrite_TlmECCurrentMemoryCorrections(total_correction_memory);
@@ -203,7 +203,7 @@ void GNCComponent ::schedIn_handler(FwIndexType portNum, U32 context) {
     m_last_ms = this->to_ms(this->getTime());
 }
 
-void GNCComponent ::LOOP_safe_mode() {
+void GCComponent ::LOOP_safe_mode() {
     Vec3 angle_error = this->get_error_from_vectors(
         m_current_sun_panels_normal,
         m_current_sun_normal
@@ -227,7 +227,7 @@ void GNCComponent ::LOOP_safe_mode() {
     this->MagnesticOut_out(0, moment);
 }
 
-void GNCComponent ::LOOP_detumble_mode() {
+void GCComponent ::LOOP_detumble_mode() {
     Vec3 ang_vel_error = this->get_error_from_vectors(
         m_current_angular_velocity.get_angular_rates(),
         Vec3(0, 0, 0)
@@ -298,7 +298,7 @@ void GNCComponent ::LOOP_detumble_mode() {
     this->TorqueOut_out(0, res_torque.wheels_torque);
 }
 
-void GNCComponent ::LOOP_pointing_mode() {
+void GCComponent ::LOOP_pointing_mode() {
     ProtectedObject<WayPoint>::Status status;
     WayPoint target_point = m_target_waypoint.get(
         WayPoint(
@@ -385,9 +385,9 @@ void GNCComponent ::LOOP_pointing_mode() {
 // Handler implementations for commands
 // ----------------------------------------------------------------------
 
-void GNCComponent ::SET_TARGET_WAYPOINT_cmdHandler(FwOpcodeType opCode,
+void GCComponent ::SET_TARGET_WAYPOINT_cmdHandler(FwOpcodeType opCode,
                                                 U32 cmdSeq,
-                                                MyFprimeProject::WayPoint target_state) {
+                                                GCProject::WayPoint target_state) {
     m_target_waypoint = target_state;
 
     this->tlmWrite_TlmTargetWayPoint(target_state);
@@ -395,7 +395,7 @@ void GNCComponent ::SET_TARGET_WAYPOINT_cmdHandler(FwOpcodeType opCode,
     this->cmdResponse_out(opCode, cmdSeq, Fw::CmdResponse::OK);
 }
 
-void GNCComponent ::SET_MODE_cmdHandler(FwOpcodeType opCode, U32 cmdSeq, MyFprimeProject::GncMode mode) {
+void GCComponent ::SET_MODE_cmdHandler(FwOpcodeType opCode, U32 cmdSeq, GCProject::GncMode mode) {
     m_gnc_mode = mode;
 
     this->tlmWrite_TlmCurrentGncMode(mode);
@@ -403,4 +403,4 @@ void GNCComponent ::SET_MODE_cmdHandler(FwOpcodeType opCode, U32 cmdSeq, MyFprim
     this->cmdResponse_out(opCode, cmdSeq, Fw::CmdResponse::OK);
 }
 
-}  // namespace MyFprimeProject
+}  // namespace GCProject
